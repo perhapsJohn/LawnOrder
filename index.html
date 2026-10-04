@@ -86,19 +86,74 @@ body {
 		</div>
 
 		<script>
-// Browsers start audio suspended until a gesture: keep every AudioContext the
-// engine makes and resume them on the first tap / click / key.
+// Audio unlock. Browsers keep audio suspended until a user gesture, and iOS
+// Safari only lets it start *inside* one (synchronously in the handler). The
+// engine makes its AudioContext out of reach, so the constructor is wrapped
+// here, before the engine loads, and every instance is recorded. Each tap /
+// click / key then:
+//   * on iOS, sets navigator.audioSession to "playback" (iOS 17+) and plays a
+//     silent looping <audio>, so the ring/silent switch does not mute the game;
+//   * resumes every context that is not running.
+// The listeners stay: iOS suspends ("interrupted") on calls and app switches.
+// (Same unlock as the sibling Godot games' shells.)
 (function () {
 	const AC = window.AudioContext || window.webkitAudioContext;
 	const ctxs = [];
+	const ua = navigator.userAgent;
+	const IOS = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+	let gestured = false;
+	let tag = null;
+	window.loAudioContexts = ctxs;
 	if (AC) {
 		const Wrapped = function (...args) { const c = new AC(...args); ctxs.push(c); return c; };
 		Wrapped.prototype = AC.prototype;
 		window.AudioContext = Wrapped;
 		if (window.webkitAudioContext) { window.webkitAudioContext = Wrapped; }
 	}
-	const unlock = () => ctxs.forEach((c) => { if (c.state !== 'running' && c.state !== 'closed') { c.resume(); } });
-	['pointerdown', 'pointerup', 'touchend', 'keydown', 'click'].forEach((e) => document.addEventListener(e, unlock, true));
+	// 0.5 s of 8-bit silence (a WAV built here: no extra file to fetch)
+	function silentWav() {
+		const rate = 8000, n = 4000, v = new DataView(new ArrayBuffer(44 + n));
+		const str = (o, t) => { for (let i = 0; i < t.length; i++) { v.setUint8(o + i, t.charCodeAt(i)); } };
+		str(0, 'RIFF'); v.setUint32(4, 36 + n, true); str(8, 'WAVE'); str(12, 'fmt ');
+		v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+		v.setUint32(24, rate, true); v.setUint32(28, rate, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true);
+		str(36, 'data'); v.setUint32(40, n, true);
+		for (let i = 0; i < n; i++) { v.setUint8(44 + i, 128); }
+		return URL.createObjectURL(new Blob([v.buffer], { type: 'audio/wav' }));
+	}
+	function playbackSession() {
+		if (!IOS || document.hidden) { return; }
+		try { if (navigator.audioSession) { navigator.audioSession.type = 'playback'; } } catch (e) { /* older iOS */ }
+		if (!tag) {
+			tag = document.createElement('audio');
+			tag.setAttribute('playsinline', '');
+			tag.setAttribute('x-webkit-airplay', 'deny');
+			tag.disableRemotePlayback = true;
+			tag.loop = true;
+			tag.preload = 'auto';
+			tag.src = silentWav();
+		}
+		if (tag.paused) { const p = tag.play(); if (p) { p.catch(() => {}); } }
+	}
+	function unlock(ev) {
+		if (ev && ev.isTrusted === false) { return; }
+		playbackSession();
+		if (ctxs.length > 0) { gestured = true; }
+		ctxs.forEach((c) => {
+			if (c.state !== 'running' && c.state !== 'closed') { const p = c.resume(); if (p) { p.catch(() => {}); } }
+		});
+	}
+	['pointerdown', 'pointerup', 'mousedown', 'touchstart', 'touchend', 'click', 'keydown'].forEach((e) =>
+		window.addEventListener(e, unlock, { capture: true, passive: true }));
+	// the silent loop would show in the lock screen's player: pause it while hidden
+	document.addEventListener('visibilitychange', () => {
+		if (document.hidden) {
+			if (tag && !tag.paused) { tag.pause(); }
+		} else if (gestured) {
+			playbackSession();
+			ctxs.forEach((c) => { if (c.state !== 'running' && c.state !== 'closed') { c.resume().catch(() => {}); } });
+		}
+	});
 }());
 		</script>
 		<script src="index.js"></script>
