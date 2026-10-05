@@ -11,5 +11,9 @@ One page, two packs: phones and tablets load `index.mobile.pck` (touch controls,
 a 1280 x 720 layout, no desktop-only music layers); desktops load `index.pck`.
 `?pack=mobile|desktop` forces one.
 
+Inside the Scareathon arcade it asks for the arcade session (`unityReady`) to
+use the signed-in username, and a finished Paper Route posts
+`{type: "PLAYER_DIED", score}` (the route's total) to the page around it.
+
 This repo holds only the exported files (Godot 4.6 web export); the game's
 source lives elsewhere and publishes here with `tools/export_web.py`.
